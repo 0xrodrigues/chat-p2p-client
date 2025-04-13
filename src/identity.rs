@@ -7,6 +7,9 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use dirs::home_dir;
 use uuid::Uuid;
 
+use std::fs::OpenOptions;
+
+
 #[allow(dead_code)]
 pub struct Identity {
     pub id: String,
@@ -57,6 +60,26 @@ impl Identity {
         println!("🔑 Public Key (base64): {}", pubkey);
 
         Self { id, public_key: pubkey }
+    }
+
+    pub fn export_pubkey() {
+        let profile = std::env::var("CHAT_PROFILE").unwrap_or_else(|_| "p2p".to_string());
+        let base = crate::identity::get_base_path();
+        let pubkey_path = base.join("public.key");
+
+        let pubkey = std::fs::read_to_string(&pubkey_path).expect("❌ Failed to read public key");
+
+        let export_path = format!("{}.pub", profile);
+        let mut file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&export_path)
+            .expect("❌ Failed to create export file");
+
+        file.write_all(pubkey.as_bytes()).expect("❌ Failed to write public key");
+
+        println!("✅ Public key exported to '{}'", export_path);
     }
 }
 

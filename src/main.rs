@@ -30,6 +30,9 @@ async fn main() {
         "list-contacts" => {
             contact_store::list_contacts();
         }
+        "export-pub" => {
+            identity::Identity::export_pubkey();
+        }
         _ => {
             println!("Commands:");
             println!("  init                          - Generate new identity");
