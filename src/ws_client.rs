@@ -28,8 +28,17 @@ pub async fn start_interactive_chat(server_url: &str, peer: &str) {
     tokio::spawn(async move {
         while let Some(Ok(msg)) = read.next().await {
             if let Message::Text(text) = msg {
-                println!("📨 Received: {}", text);
-                message_store::save_message(&peer_clone, &text, true);
+                let dt = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S");
+                if let Ok(json_msg) = serde_json::from_str::<serde_json::Value>(&text) {
+                    if let Some(content) = json_msg.get("msg").and_then(|v| v.as_str()) {
+                        println!("[{}] 📥 {}: {}", dt, peer_clone, content);
+                        message_store::save_message(&peer_clone, content, true);
+                    } else {
+                        println!("[{}] ⚠️ Mensagem JSON sem campo 'msg': {}", dt, text);
+                    }
+                } else {
+                    println!("[{}] ⚠️ Mensagem inválida: {}", dt, text);
+                }
             }
         }
     });
@@ -39,21 +48,28 @@ pub async fn start_interactive_chat(server_url: &str, peer: &str) {
 
     while let Ok(Some(line)) = lines.next_line().await {
         let trimmed = line.trim();
+        
         if trimmed == "exit" || trimmed == "quit" {
             println!("👋 Exiting chat.");
             break;
         }
+    
         if !trimmed.is_empty() {
             let pubkey_bytes = contact_store::get_pubkey(peer).expect("❌ Unknown contact");
             let encoded_to = base64::engine::general_purpose::STANDARD.encode(pubkey_bytes);
-            
+    
             let payload = serde_json::json!({
                 "to": encoded_to,
                 "msg": trimmed,
             });
+    
             write.send(Message::Text(payload.to_string())).await.unwrap();
             message_store::save_message(peer, trimmed, false);
+    
+            let dt = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S");
+            println!("[{}] 📤 me: {}", dt, trimmed);
         }
+    
         print!("> ");
         io::stdout().flush().unwrap();
     }
