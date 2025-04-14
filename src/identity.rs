@@ -86,6 +86,6 @@ impl Identity {
 pub fn get_base_path() -> PathBuf {
     let profile = env::var("CHAT_PROFILE").unwrap_or_else(|_| "p2p".to_string());
     home_dir()
-        .expect("⚠️ Não foi possível acessar o diretório home")
+        .expect("⚠️ Could not access home directory")
         .join(format!(".chat-{}", profile))
 }

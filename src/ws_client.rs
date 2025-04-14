@@ -34,10 +34,10 @@ pub async fn start_interactive_chat(server_url: &str, peer: &str) {
                         println!("[{}] 📥 {}: {}", dt, peer_clone, content);
                         message_store::save_message(&peer_clone, content, true);
                     } else {
-                        println!("[{}] ⚠️ Mensagem JSON sem campo 'msg': {}", dt, text);
+                        println!("[{}] ⚠️ JSON message without 'msg' field: {}", dt, text);
                     }
                 } else {
-                    println!("[{}] ⚠️ Mensagem inválida: {}", dt, text);
+                    println!("[{}] ⚠️ Invalid message: {}", dt, text);
                 }
             }
         }
