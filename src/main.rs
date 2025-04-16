@@ -4,6 +4,8 @@ mod message_store;
 mod contact_store;
 mod contacts;
 
+mod payloads;
+
 use std::env;
 
 #[tokio::main]

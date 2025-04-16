@@ -9,11 +9,13 @@ use crate::message_store;
 use base64::Engine;
 use crate::identity;
 
+use crate::payloads::payload::ChatPayload;
+use crate::payloads::outgoing_message::OutgoingMessage;
 
 pub async fn start_interactive_chat(server_url: &str, peer: &str) {
     let my_identity = identity::Identity::load();
-    let pubkey = my_identity.public_key;
-    let url = format!("{}?pub={}", server_url, pubkey);
+    let from_pub = my_identity.public_key.clone(); // clone aqui uma única vez
+    let url = format!("{}?pub={}", server_url, from_pub);
     let url = Url::parse(&url).expect("❌ Invalid URL");
     
     println!("🌐 Connecting to {}", url);
@@ -24,7 +26,7 @@ pub async fn start_interactive_chat(server_url: &str, peer: &str) {
 
     let (mut write, mut read) = ws_stream.split();
 
-    let peer_clone = peer.to_string(); // para mover para a task
+    let peer_clone = peer.to_string();
     tokio::spawn(async move {
         while let Some(Ok(msg)) = read.next().await {
             if let Message::Text(text) = msg {
@@ -58,12 +60,19 @@ pub async fn start_interactive_chat(server_url: &str, peer: &str) {
             let pubkey_bytes = contact_store::get_pubkey(peer).expect("❌ Unknown contact");
             let encoded_to = base64::engine::general_purpose::STANDARD.encode(pubkey_bytes);
     
-            let payload = serde_json::json!({
-                "to": encoded_to,
-                "msg": trimmed,
-            });
-    
-            write.send(Message::Text(payload.to_string())).await.unwrap();
+            let msg = OutgoingMessage::Chat {
+                from: from_pub.clone(), // usa o clone do início
+                to: encoded_to,
+                payload: ChatPayload {
+                    msg: trimmed.to_string(),
+                },
+            };
+
+            let json = serde_json::to_string(&msg).expect("❌ Failed to serialize message");
+
+            println!("DEBUG JSON: {}", json);
+
+            write.send(Message::Text(json)).await.unwrap();
             message_store::save_message(peer, trimmed, false);
     
             let dt = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S");
