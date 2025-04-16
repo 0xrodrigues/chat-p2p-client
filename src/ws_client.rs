@@ -11,6 +11,7 @@ use crate::identity;
 
 use crate::payloads::payload::{ChatPayload, ChallengeRequestPayload};
 use crate::payloads::outgoing_message::OutgoingMessage;
+use crate::payloads::incoming_message::IncomingMessage;
 
 use nanoid::nanoid;
 
@@ -46,19 +47,27 @@ pub async fn start_interactive_chat(server_url: &str, peer: &str) {
     println!("🔐 Sent challenge-request to {} with nonce: {}", peer, nonce);
 
     // 📥 Task para escutar mensagens recebidas
-    let peer_clone = peer.to_string();
     tokio::spawn(async move {
         while let Some(Ok(msg)) = read.next().await {
             if let Message::Text(text) = msg {
-                let dt = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S");
-                if let Ok(json_msg) = serde_json::from_str::<serde_json::Value>(&text) {
-                    if let Some(content) = json_msg.get("msg").and_then(|v| v.as_str()) {
-                        println!("[{}] 📥 {}: {}", dt, peer_clone, content);
-                        message_store::save_message(&peer_clone, content, true);
-                    } else {
-                        println!("[{}] ⚠️ JSON message without 'msg' field: {}", dt, text);
+                if let Ok(parsed) = serde_json::from_str::<IncomingMessage>(&text) {
+                    match parsed {
+                        IncomingMessage::Chat { from, payload, .. } => {
+                            let dt = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S");
+                            println!("[{}] 📥 {}: {}", dt, from, payload.msg);
+                            message_store::save_message(&from, &payload.msg, true);
+                        },
+                        IncomingMessage::ChallengeRequest { from, payload, .. } => {
+                            println!("🔐 Received challenge-request from {} with nonce: {}", from, payload.nonce);
+                            // aqui depois vamos responder com challenge-response
+                        },
+                        IncomingMessage::ChallengeResponse { from, payload, .. } => {
+                            println!("✅ Received challenge-response from {} with signed nonce: {}", from, payload.nonce);
+                            // aqui depois vamos validar a assinatura
+                        },
                     }
                 } else {
+                    let dt = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S");
                     println!("[{}] ⚠️ Invalid message: {}", dt, text);
                 }
             }
