@@ -20,18 +20,35 @@ pub fn get_store_path(peer: &str) -> PathBuf {
     base
 }
 
-pub fn save_message(peer: &str, content: &str, incoming: bool) {
-    let path = get_store_path(peer);
-    let mut messages = load_messages(peer);
-    let now = Utc::now().timestamp();
 
+pub fn save_message(peer: &str, content: &str, incoming: bool) {
+    // Caminho completo até o arquivo de mensagens
+    let path = get_store_path(peer);
+
+    // Garante que o diretório existe
+    if let Some(parent_dir) = path.parent() {
+        fs::create_dir_all(parent_dir).expect("❌ Failed to create message directory");
+    }
+
+    // Carrega mensagens anteriores
+    let mut messages = load_messages(peer);
+
+    // Cria a nova entrada
+    let now = Utc::now().timestamp();
     messages.push_back(MessageEntry {
         content: content.to_string(),
         timestamp: now,
         incoming,
     });
 
-    let file = OpenOptions::new().create(true).write(true).truncate(true).open(path).expect("❌ Failed to save message");
+    // Salva sobrescrevendo o arquivo com todas as mensagens
+    let file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&path)
+        .expect("❌ Failed to open message file");
+
     let writer = BufWriter::new(file);
     serde_json::to_writer_pretty(writer, &messages).expect("❌ Failed to write messages");
 }
