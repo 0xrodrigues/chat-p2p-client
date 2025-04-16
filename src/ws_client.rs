@@ -4,12 +4,15 @@ use futures_util::{SinkExt, StreamExt};
 use url::Url;
 use std::io::{self, Write};
 use tokio::io::AsyncBufReadExt;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
 use crate::contact_store;
 use crate::message_store;
 use base64::Engine;
 use crate::identity;
 
-use crate::payloads::payload::{ChatPayload, ChallengeRequestPayload};
+use crate::payloads::payload::{ChatPayload, ChallengeRequestPayload, ChallengeResponsePayload};
 use crate::payloads::outgoing_message::OutgoingMessage;
 use crate::payloads::incoming_message::IncomingMessage;
 
@@ -27,7 +30,9 @@ pub async fn start_interactive_chat(server_url: &str, peer: &str) {
     println!("🔗 WebSocket connected (status: {})", response.status());
     println!("💬 Type your messages below. Type 'exit' to quit.\n");
 
-    let (mut write, mut read) = ws_stream.split();
+    let (write_raw, mut read) = ws_stream.split();
+    let write = Arc::new(Mutex::new(write_raw));
+    let write_clone = Arc::clone(&write);
 
     // 🔐 Enviar challenge-request após conexão
     let pubkey_bytes = contact_store::get_pubkey(peer).expect("❌ Unknown contact");
@@ -43,7 +48,10 @@ pub async fn start_interactive_chat(server_url: &str, peer: &str) {
     };
 
     let challenge_json = serde_json::to_string(&challenge_msg).expect("❌ Failed to serialize challenge-request");
-    write.send(Message::Text(challenge_json)).await.unwrap();
+    {
+        let mut w = write.lock().await;
+        w.send(Message::Text(challenge_json)).await.unwrap();
+    }
     println!("🔐 Sent challenge-request to {} with nonce: {}", peer, nonce);
 
     // 📥 Task para escutar mensagens recebidas
@@ -59,7 +67,24 @@ pub async fn start_interactive_chat(server_url: &str, peer: &str) {
                         },
                         IncomingMessage::ChallengeRequest { from, payload, .. } => {
                             println!("🔐 Received challenge-request from {} with nonce: {}", from, payload.nonce);
-                            // aqui depois vamos responder com challenge-response
+                            
+                            let my_identity = identity::Identity::load();
+                            let signature = my_identity.sign(&payload.nonce);
+
+                            let response = OutgoingMessage::ChallengeResponse {
+                                from: my_identity.public_key.clone(),
+                                to: from.clone(),
+                                payload: ChallengeResponsePayload {
+                                    nonce: payload.nonce.clone(),
+                                    signature,
+                                },
+                            };
+
+                            let json = serde_json::to_string(&response).expect("❌ Failed to serialize challenge-response");
+                            let mut w = write_clone.lock().await;
+                            w.send(Message::Text(json)).await.unwrap();
+
+                            println!("✅ Sent challenge-response to {}", from);
                         },
                         IncomingMessage::ChallengeResponse { from, payload, .. } => {
                             println!("✅ Received challenge-response from {} with signed nonce: {}", from, payload.nonce);
@@ -98,7 +123,8 @@ pub async fn start_interactive_chat(server_url: &str, peer: &str) {
             let json = serde_json::to_string(&msg).expect("❌ Failed to serialize message");
             println!("DEBUG JSON: {}", json);
 
-            write.send(Message::Text(json)).await.unwrap();
+            let mut w = write.lock().await;
+            w.send(Message::Text(json)).await.unwrap();
             message_store::save_message(peer, trimmed, false);
 
             let dt = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S");
