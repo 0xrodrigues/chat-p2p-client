@@ -4,18 +4,18 @@ use futures_util::{SinkExt, StreamExt};
 use url::Url;
 use std::io::{self, Write};
 use tokio::io::AsyncBufReadExt;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-
 use crate::contact_store;
 use crate::message_store;
 use base64::Engine;
 use crate::identity;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use crate::payloads::payload::{ChatPayload, ChallengeRequestPayload, ChallengeResponsePayload};
 use crate::payloads::outgoing_message::OutgoingMessage;
 use crate::payloads::incoming_message::IncomingMessage;
 
+use ed25519_dalek::Verifier;
 use nanoid::nanoid;
 
 pub async fn start_interactive_chat(server_url: &str, peer: &str) {
@@ -30,9 +30,8 @@ pub async fn start_interactive_chat(server_url: &str, peer: &str) {
     println!("🔗 WebSocket connected (status: {})", response.status());
     println!("💬 Type your messages below. Type 'exit' to quit.\n");
 
-    let (write_raw, mut read) = ws_stream.split();
-    let write = Arc::new(Mutex::new(write_raw));
-    let write_clone = Arc::clone(&write);
+    let (write, mut read) = ws_stream.split();
+    let write = Arc::new(Mutex::new(write));
 
     // 🔐 Enviar challenge-request após conexão
     let pubkey_bytes = contact_store::get_pubkey(peer).expect("❌ Unknown contact");
@@ -49,12 +48,15 @@ pub async fn start_interactive_chat(server_url: &str, peer: &str) {
 
     let challenge_json = serde_json::to_string(&challenge_msg).expect("❌ Failed to serialize challenge-request");
     {
-        let mut w = write.lock().await;
-        w.send(Message::Text(challenge_json)).await.unwrap();
+        let mut writer = write.lock().await;
+        writer.send(Message::Text(challenge_json)).await.unwrap();
     }
     println!("🔐 Sent challenge-request to {} with nonce: {}", peer, nonce);
 
-    // 📥 Task para escutar mensagens recebidas
+    let write_clone = Arc::clone(&write);
+    let sent_nonce = nonce.clone();
+    let peer_clone = peer.to_string();
+
     tokio::spawn(async move {
         while let Some(Ok(msg)) = read.next().await {
             if let Message::Text(text) = msg {
@@ -67,7 +69,7 @@ pub async fn start_interactive_chat(server_url: &str, peer: &str) {
                         },
                         IncomingMessage::ChallengeRequest { from, payload, .. } => {
                             println!("🔐 Received challenge-request from {} with nonce: {}", from, payload.nonce);
-                            
+
                             let my_identity = identity::Identity::load();
                             let signature = my_identity.sign(&payload.nonce);
 
@@ -81,14 +83,34 @@ pub async fn start_interactive_chat(server_url: &str, peer: &str) {
                             };
 
                             let json = serde_json::to_string(&response).expect("❌ Failed to serialize challenge-response");
-                            let mut w = write_clone.lock().await;
-                            w.send(Message::Text(json)).await.unwrap();
+                            let mut writer = write_clone.lock().await;
+                            writer.send(Message::Text(json)).await.unwrap();
 
                             println!("✅ Sent challenge-response to {}", from);
                         },
                         IncomingMessage::ChallengeResponse { from, payload, .. } => {
                             println!("✅ Received challenge-response from {} with signed nonce: {}", from, payload.nonce);
-                            // aqui depois vamos validar a assinatura
+
+                            // 🔐 Verificar assinatura
+                            let pubkey_bytes = base64::engine::general_purpose::STANDARD
+                                .decode(&from)
+                                .expect("❌ Failed to decode pubkey");
+
+                            let pubkey = ed25519_dalek::PublicKey::from_bytes(&pubkey_bytes)
+                                .expect("❌ Invalid public key");
+
+                            let sig_bytes = base64::engine::general_purpose::STANDARD
+                                .decode(&payload.signature)
+                                .expect("❌ Failed to decode signature");
+
+                            let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes)
+                                .expect("❌ Invalid signature format");
+
+                            if pubkey.verify(sent_nonce.as_bytes(), &signature).is_ok() {
+                                println!("✅ Peer {} authenticated successfully.", from);
+                            } else {
+                                println!("❌ Invalid signature from {}", from);
+                            }
                         },
                     }
                 } else {
@@ -121,12 +143,10 @@ pub async fn start_interactive_chat(server_url: &str, peer: &str) {
             };
 
             let json = serde_json::to_string(&msg).expect("❌ Failed to serialize message");
-            println!("DEBUG JSON: {}", json);
+            let mut writer = write.lock().await;
+            writer.send(Message::Text(json)).await.unwrap();
 
-            let mut w = write.lock().await;
-            w.send(Message::Text(json)).await.unwrap();
-            message_store::save_message(peer, trimmed, false);
-
+            message_store::save_message(&peer_clone, trimmed, false);
             let dt = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S");
             println!("[{}] 📤 me: {}", dt, trimmed);
         }
