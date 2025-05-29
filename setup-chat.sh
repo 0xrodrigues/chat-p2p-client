@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -e
+set -euo pipefail
 
 echo "🧹 Limpando perfis anteriores..."
 rm -rf ~/.chat-alice ~/.chat-bob
@@ -13,27 +13,28 @@ CHAT_PROFILE=bob cargo run --quiet -- init
 
 echo "🔗 Adicionando Bob nos contatos de Alice..."
 BOB_KEY=$(cat ~/.chat-bob/public.key)
-CHAT_PROFILE=alice cargo run --quiet -- add-contact bob $BOB_KEY
+CHAT_PROFILE=alice cargo run --quiet -- add-contact bob "$BOB_KEY"
 
 echo "🔗 Adicionando Alice nos contatos de Bob..."
 ALICE_KEY=$(cat ~/.chat-alice/public.key)
-CHAT_PROFILE=bob cargo run --quiet -- add-contact alice $ALICE_KEY
+CHAT_PROFILE=bob cargo run --quiet -- add-contact alice "$ALICE_KEY"
 
 echo
 echo "📨 Enviando mensagem com Bob offline..."
-CHAT_PROFILE=alice cargo run --quiet -- chat ws://localhost:8080/ws bob <<< "Mensagem secreta para o Bob"$'\nexit'
+echo -e "Mensagem secreta para o Bob\nexit" | CHAT_PROFILE=alice cargo run --quiet -- chat ws://localhost:8080/ws bob
 
 echo
 echo "💤 Bob está offline. Mensagem deve ter sido salva no Redis ou ignorada, dependendo da infra."
-read -p "🔄 Pressione ENTER para simular Bob conectando-se..."
+echo "🔄 Pressione ENTER para simular Bob conectando-se..."
+read
 
 echo
 echo "📡 Bob conectando ao WebSocket e lendo mensagem pendente:"
-CHAT_PROFILE=bob cargo run --quiet -- chat ws://localhost:8080/ws alice <<< "exit"
+echo "exit" | CHAT_PROFILE=bob cargo run --quiet -- chat ws://localhost:8080/ws alice
 
 echo
 echo "📜 Histórico de Alice:"
-CHAT_PROFILE=alice cargo run --quiet -- chat ws://localhost:8080/ws bob <<< "exit"
+echo "exit" | CHAT_PROFILE=alice cargo run --quiet -- chat ws://localhost:8080/ws bob
 
 echo
 echo "✅ Fluxo completo finalizado!"
